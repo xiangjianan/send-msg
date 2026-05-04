@@ -11,10 +11,16 @@
     #messages { flex: 1; overflow-y: auto; padding: 16px 24px; display: flex; flex-direction: column; gap: 8px; }
     .msg { background: #fff; border-radius: 8px; padding: 12px 16px; box-shadow: 0 1px 2px rgba(0,0,0,0.08); animation: fadeIn 0.3s ease; }
     .msg .time { font-size: 12px; color: #999; margin-top: 4px; }
+    .msg .actions { margin-top: 6px; display: flex; gap: 6px; }
+    .msg .actions button { background: none; border: 1px solid #ddd; border-radius: 4px; padding: 4px 8px; font-size: 12px; color: #888; cursor: pointer; transition: background 0.2s, color 0.2s; }
+    .msg .actions button:hover { background: #f0f0f0; color: #333; }
+    .msg .actions .copied { color: #4caf50; border-color: #4caf50; }
+    .msg .actions .del-btn:hover { background: #fff0f0; color: #e53935; border-color: #e53935; }
+    .msg .actions .confirming { color: #e53935; border-color: #e53935; background: #fff0f0; }
     .empty { text-align: center; color: #aaa; margin-top: 40vh; }
     .input-bar { padding: 16px 24px; background: #fff; border-top: 1px solid #e0e0e0; display: flex; gap: 8px; }
-    .input-bar input { flex: 1; padding: 12px 16px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; outline: none; transition: border-color 0.2s; }
-    .input-bar input:focus { border-color: #1a1a2e; }
+    .input-bar textarea { flex: 1; padding: 12px 16px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; outline: none; transition: border-color 0.2s; resize: none; font-family: inherit; line-height: 1.4; }
+    .input-bar textarea:focus { border-color: #1a1a2e; }
     .input-bar button { padding: 12px 24px; background: #1a1a2e; color: #fff; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; transition: background 0.2s; }
     .input-bar button:hover { background: #16213e; }
     .input-bar button:active { background: #0f3460; }
@@ -27,46 +33,114 @@
     <div class="empty" id="placeholder">发送第一条消息吧</div>
   </div>
   <div class="input-bar">
-    <input id="input" type="text" placeholder="输入消息..." autofocus />
+    <textarea id="input" rows="1" placeholder="输入消息... (Shift+Enter 换行)" autofocus></textarea>
     <button id="btn">发送</button>
   </div>
   <script>
-    const input = document.getElementById("input");
-    const btn = document.getElementById("btn");
-    const messagesEl = document.getElementById("messages");
-    const placeholder = document.getElementById("placeholder");
+    var messagesEl = document.getElementById("messages");
+    var input = document.getElementById("input");
+    var btn = document.getElementById("btn");
 
-    async function send() {
-      const message = input.value.trim();
-      if (!message) return;
+    function escapeHtml(str) {
+      var d = document.createElement("div");
+      d.textContent = str;
+      return d.innerHTML;
+    }
 
-      const res = await fetch("/broadcast", {
+    function createMsgEl(m) {
+      var div = document.createElement("div");
+      div.className = "msg";
+      div.dataset.id = m.id;
+      div.dataset.raw = m.message;
+      div.innerHTML =
+        '<div class="msg-text">' + escapeHtml(m.message).replace(/\n/g, '<br>') + '</div>' +
+        '<div class="time">' + escapeHtml(m.time) + '</div>' +
+        '<div class="actions">' +
+          '<button class="copy-btn" onclick="copyMsg(this)">复制</button>' +
+          '<button class="del-btn" onclick="confirmDelete(this, \'' + m.id + '\')">删除</button>' +
+        '</div>';
+      return div;
+    }
+
+    function renderAll(msgs) {
+      messagesEl.innerHTML = "";
+      if (msgs.length === 0) {
+        messagesEl.innerHTML = '<div class="empty">发送第一条消息吧</div>';
+        return;
+      }
+      msgs.forEach(function(m) { messagesEl.appendChild(createMsgEl(m)); });
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    window.copyMsg = function(btn) {
+      var text = btn.closest(".msg").dataset.raw;
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.cssText = "position:fixed;left:-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      btn.textContent = "已复制";
+      btn.classList.add("copied");
+      setTimeout(function() { btn.textContent = "复制"; btn.classList.remove("copied"); }, 1500);
+    };
+
+    window.confirmDelete = function(btn, id) {
+      if (btn.dataset.confirming === "true") {
+        doDelete(id);
+        return;
+      }
+      btn.dataset.confirming = "true";
+      btn.textContent = "确认删除?";
+      btn.classList.add("confirming");
+      setTimeout(function() {
+        btn.dataset.confirming = "";
+        btn.textContent = "删除";
+        btn.classList.remove("confirming");
+      }, 3000);
+    };
+
+    async function doDelete(id) {
+      var res = await fetch("/delete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({ id: id }),
+      });
+      var data = await res.json();
+      if (data.ok) {
+        var el = messagesEl.querySelector('[data-id="' + id + '"]');
+        if (el) el.remove();
+        if (!messagesEl.querySelector(".msg")) {
+          messagesEl.innerHTML = '<div class="empty">发送第一条消息吧</div>';
+        }
+      }
+    }
+
+    async function send() {
+      var message = input.value.trim();
+      if (!message) return;
+
+      var res = await fetch("/broadcast", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: message }),
       });
 
-      const data = await res.json();
+      var data = await res.json();
       if (data.ok) {
+        var placeholder = messagesEl.querySelector(".empty");
         if (placeholder) placeholder.remove();
-        const now = new Date().toLocaleTimeString();
-        const div = document.createElement("div");
-        div.className = "msg";
-        div.innerHTML = `<div>${escapeHtml(message)}</div><div class="time">${now} · 已推送到 ${data.recipients} 个客户端</div>`;
-        messagesEl.appendChild(div);
+        messagesEl.appendChild(createMsgEl({ id: data.id, message: message, time: new Date().toLocaleTimeString() }));
         messagesEl.scrollTop = messagesEl.scrollHeight;
         input.value = "";
       }
     }
 
-    function escapeHtml(str) {
-      const d = document.createElement("div");
-      d.textContent = str;
-      return d.innerHTML;
-    }
-
     btn.addEventListener("click", send);
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+    input.addEventListener("keydown", function(e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+
+    fetch("/messages").then(function(r) { return r.json(); }).then(renderAll);
   </script>
 </body>
 </html>
